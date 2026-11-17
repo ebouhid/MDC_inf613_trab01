@@ -1,0 +1,161 @@
+---
+title: INF0613 -- Aprendizado de Máquina Não Supervisionado
+output: pdf_document
+subtitle: Trabalho 1 - Regras de Associação
+author: 
+  - "Anderson Soares"
+  - "Eduardo Bouhid"
+  - "Mateus Coelho"
+---
+
+
+```{r setup, include = FALSE}
+knitr::opts_chunk$set(echo = TRUE, error = FALSE, message = FALSE, warning = FALSE, tidy = FALSE)
+options(digits = 3)
+```
+
+Neste primeiro trabalho, vamos minerar Regras de Associação em uma base de dados que contém as vendas de uma padaria. A base de dados está disponível na página da disciplina no Moodle (arquivo `bakery.csv`).
+
+# Atividade 0 -- Configurando o ambiente
+Antes de começar a implementação do seu trabalho configure o _workspace_ e importe todos os pacotes:
+
+```{r atv0-code}
+# Adicione os demais pacotes usados
+# Bibliotecas usadas neste trabalho:
+library(arules)
+
+# Configurando ambiente de trabalho:
+# setwd("")
+
+```
+
+
+# Atividade 1 -- Análise Exploratória da Base de Dados (*3,0 pts*)
+
+Dado um caminho para uma base de dados, leia as transações e faça uma análise Exploratória sobre elas. Use as funções `summary`,  `inspect` e `itemFrequencyPlot`. Na função `inspect`, limite sua análise às 10 primeiras transações e na função `itemFrequencyPlot` gere um gráfico com a frequência relativa dos 30 itens mais frequentes. 
+
+```{r atv1-code, fig.width = 7, fig.height = 4.5}
+# Ler transações
+# Cada linha do CSV é uma cesta de compras (formato "basket"), com os itens
+# separados por vírgula. rm.duplicates = TRUE descarta itens repetidos dentro
+# de uma mesma transação (nesta base não há nenhum).
+transacoes <- read.transactions("bakery.csv", format = "basket", sep = ",",
+                                rm.duplicates = TRUE)
+
+# Visualizando transações
+inspect(transacoes[1:10])
+
+# Sumário da base
+summary(transacoes)
+
+# Analisando a frequência dos itens
+itemFrequencyPlot(transacoes, topN = 30, type = "relative", cex.names = 0.7,
+                  main = "Frequência relativa dos 30 itens mais frequentes",
+                  ylab = "Frequência relativa (suporte)")
+
+# Complemento ao gráfico: quantidade de itens em cada faixa de frequência
+# relativa, considerando todos os 91 itens (e não só os 30 do gráfico)
+freq_itens <- itemFrequency(transacoes, type = "relative")
+table(cut(freq_itens, breaks = c(0, 0.005, 0.01, 0.05, 0.10, 1)))
+```
+
+
+## Análise 
+
+a) Descreva a base de dados discutindo os resultados das funções acima.
+
+**Resposta:** <!-- Escreva sua resposta abaixo -->
+
+A base tem **2579 transações** (cestas de compra) e **91 itens distintos**. A densidade da matriz de transações é de apenas 0,035: em média, uma cesta contém cerca de 3,5% dos itens disponíveis ($3{,}2 / 91 \approx 0{,}035$). É uma matriz bastante esparsa, como costuma acontecer em dados de cesta de compras.
+
+**`inspect` (10 primeiras transações).** São cestas pequenas, de 2 a 5 itens, que em geral juntam uma bebida (Coffee, Tea, Juice) com algo para comer (Bread, Pastry, Medialuna, Alfajores, Cake, Muffin etc.). Coffee e Bread já aparecem em 4 dessas 10 transações cada um, enquanto itens como Vegan mincepie, Ellas Kitchen Pouches e Smoothies aparecem só uma vez. O `arules` lista os itens de cada cesta em ordem alfabética. Isso não atrapalha, porque as regras de associação não levam em conta a ordem da compra.
+
+**`summary`.**
+
+- *Itens mais frequentes:* Coffee (1403 transações, 54,4%), Bread (848; 32,9%), Tea (617; 23,9%), Cake (515; 20,0%) e Pastry (342; 13,3%). Coffee sozinho está em mais da metade das compras.
+- *Tamanho das transações:* mínimo de 1, mediana de 3, média de 3,2 e máximo de 10 itens. A grande maioria das cestas (2296, ou 89%) tem de 2 a 4 itens. Só 20 cestas têm um único item, e só 74 (2,9%) têm 6 itens ou mais.
+
+**`itemFrequencyPlot`.** O gráfico mostra uma distribuição muito assimétrica, de cauda longa. Coffee (0,54) está bem acima dos demais, seguido de Bread (0,33), e depois a frequência cai rápido. Só 10 itens (até Juice, com 10,4%) aparecem em mais de 10% das transações. Do 11º ao 30º item, a frequência cai de 8,9% (Alfajores) para 2,3% (Frittata). A tabela de faixas, que cobre os 91 itens, mostra que essa cauda continua para além do gráfico: 52 itens (57%) aparecem em menos de 1% das transações, e 47 deles aparecem em menos de 0,5% (no máximo 11 transações). Muitos desses itens raros são produtos sazonais ou ocasionais (Valentines card, Panatone, Christmas common) ou não são comida (Tshirt, Postcard, Gift voucher).
+
+Em resumo, o perfil é o de uma padaria/café: a compra típica é pequena, com uma bebida quente acompanhada de um pão ou doce. A base é dominada por poucos itens muito populares e tem um grande número de itens vendidos raramente.
+
+<!-- Fim da resposta -->
+
+b) Ao gerarmos o gráfico de frequências, temos uma representação visual de uma informação já presente no resultado da função `summary`. Contudo, esse gráfico nos dá uma visão mais ampla da base. Assim, podemos ver a frequência de outros itens em relação aos 10 mais frequentes. Quais informações podemos obter a partir desse gráfico (e da análise anterior) para nos ajudar na extração de regras de associação com o algoritmo `apriori`? Isto é, como a frequência dos itens pode afetar os parâmetros de configuração do algoritmo `apriori`?
+
+**Resposta:** <!-- Escreva sua resposta abaixo -->
+
+O gráfico mostra que a base é dominada por poucos itens e tem uma cauda longa de itens raros. Isso afeta diretamente a escolha dos parâmetros do `apriori`:
+
+1. **Suporte mínimo (`supp`).** Pela propriedade de antimonotonicidade, o suporte de um itemset nunca passa do suporte do seu item menos frequente. Por isso, a frequência de cada item no gráfico é um limite superior para o suporte de qualquer regra que o contenha. Na prática:
+    - *Suporte alto* (por exemplo, 10%): só os 10 primeiros itens do gráfico podem aparecer em regras, e ainda restam poucas combinações frequentes entre eles, quase todas com Coffee ou Bread. O resultado são poucas regras, e em geral óbvias.
+    - *Suporte muito baixo* (por exemplo, abaixo de 0,5%): entram itens que aparecem em uma dúzia de transações ou menos. O número de itemsets candidatos cresce muito, o que aumenta o custo, e as regras passam a depender de pouquíssimas compras, o que as torna estatisticamente frágeis. Uma regra com suporte de 0,2%, por exemplo, representa só 5 cestas.
+    - *Faixa razoável:* algo entre 1% e 5%, que cobre os itens do gráfico (o 30º item tem 2,3%). Como a cesta típica tem de 2 a 4 itens, o suporte de combinações de 3 itens é bem menor que o de pares. Para obter regras com dois itens no antecedente, o suporte precisa ficar mais perto de 1%.
+
+2. **Tamanho das regras (`minlen`/`maxlen`).** Como 89% das cestas têm de 2 a 4 itens (mediana de 3), as regras úteis terão 2 ou 3 itens, e o `maxlen` padrão já basta. Já o `minlen` deve ser 2. Com o padrão (`minlen = 1`), o `apriori` gera regras de antecedente vazio, como $\{\} \Rightarrow \{\mathrm{Coffee}\}$, sempre que a confiança mínima for menor ou igual a 54,4%.
+
+3. **Confiança mínima (`conf`).** A confiança de $X \Rightarrow Y$ estima $P(Y \mid X)$. Se $X$ e $Y$ forem independentes, ela é igual ao suporte de $Y$. Como Coffee está em 54,4% das cestas, uma regra $X \Rightarrow \{\mathrm{Coffee}\}$ tende a ter confiança perto de 0,54 mesmo sem nenhuma relação real entre $X$ e Coffee. Portanto:
+    - Com uma confiança mínima de até cerca de 55%, devem aparecer muitas regras com Coffee no consequente só por causa da popularidade do item. Nesses casos, confiança alta não indica uma associação forte.
+    - Já os itens menos frequentes (Tea 23,9%, Cake 20,0%, e os demais abaixo de 15%) dificilmente alcançam confiança alta como consequentes. Para encontrar regras com esses itens no consequente, é preciso usar uma confiança mínima mais baixa (por exemplo, de 20% a 40%) e comparar a confiança de cada regra com a frequência do seu consequente, que é exatamente o que o *lift* faz (Atividade 3).
+
+Em resumo, o gráfico de frequências dá as referências para configurar o `apriori`. A frequência dos itens mostra até onde dá para subir o suporte mínimo sem perder os itens de interesse, e a frequência do consequente é a linha de base com a qual a confiança de uma regra deve ser comparada.
+
+<!-- Fim da resposta -->
+
+# Atividade 2 -- Minerando Regras (*3,5 pts*)
+
+Use o algoritmo `apriori` para minerar regras na base de dados fornecida. Experimente com pelo menos *3 conjuntos* de valores diferentes de suporte e confiança para encontrar regras de associação. Imprima as cinco regras com o maior confiança de cada conjunto escolhido.  Lembre-se de usar seu conhecimento sobre a base, obtido na questão anterior, para a escolha dos valores de suporte e confiança.
+
+```{r atv2-code}
+# Conjunto 1: suporte =    e confiança =    
+
+
+# Conjunto 2: suporte =    e confiança =    
+ 
+
+# Conjunto 3: suporte =    e confiança =    
+
+
+```
+
+## Análises 
+a) Quais as regras mais interessantes geradas a partir dessa base? Justifique.
+
+**Resposta:** <!-- Escreva sua resposta abaixo -->
+
+
+<!-- Fim da resposta -->
+
+# Atividade 3 -- Medidas de Interesse (*3,5 pts*)
+
+Vimos na aula que, mesmo após as podas do algoritmo `apriori`, ainda temos algumas regras com características indesejáveis como redundâncias e dependência estatística negativa. Também vimos algumas medidas que nos ajudam a analisar melhor essas regras como o lift, a convicção e a razão de chances. Nesta questão, escolha um dos conjuntos de regras geradas na atividade anterior e o analise usando essas medidas. Compute as três medidas para o conjunto escolhido com a função `interestMeasure` e experimente ordenar as regras com cada uma das novas medidas.
+
+Dica: para adicionar as medidas em um conjunto de regras qualquer, você pode utilizar o comando `cbind` e a função `quality`:
+```
+quality(regras) <- cbind(quality(regras), interestMeasure(regras, measure=c("conviction", "oddsRatio"), 
+                                          transactions = transacoes))
+```
+
+
+```{r atv3-code}
+# Compute as medidas de interesse 
+
+
+# Apresente as regras ordenadas por lift
+
+# Apresente as regras ordenadas por convicção
+
+# Apresente as regras ordenadas por razão de chances
+
+
+```
+
+
+## Análise 
+a) Quais as regras mais interessantes do conjunto? Justifique.
+
+**Resposta:** <!-- Escreva sua resposta abaixo -->
+
+
+<!-- Fim da resposta -->
+
