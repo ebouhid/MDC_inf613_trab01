@@ -107,15 +107,69 @@ Em resumo, o gráfico de frequências dá as referências para configurar o `apr
 Use o algoritmo `apriori` para minerar regras na base de dados fornecida. Experimente com pelo menos *3 conjuntos* de valores diferentes de suporte e confiança para encontrar regras de associação. Imprima as cinco regras com o maior confiança de cada conjunto escolhido.  Lembre-se de usar seu conhecimento sobre a base, obtido na questão anterior, para a escolha dos valores de suporte e confiança.
 
 ```{r atv2-code}
-# Conjunto 1: suporte =    e confiança =    
+# Em todos os conjuntos usamos minlen = 2 para evitar regras de antecedente
+# vazio (ex.: {} => {Coffee}), como discutido na Atividade 1b. O parâmetro
+# verbose = FALSE apenas omite o log de execução do apriori no relatório.
 
+# Conjunto 1: suporte = 0,05 e confiança = 0,5
+# Suporte alto: só os 17 itens presentes em pelo menos 5% das transações
+# (>= 129 cestas) podem aparecer nas regras. Confiança próxima da frequência
+# do Coffee (54,4%).
+regras1 <- apriori(transacoes,
+                   parameter = list(supp = 0.05, conf = 0.5, minlen = 2),
+                   control = list(verbose = FALSE))
+inspect(head(sort(regras1, by = "confidence"), 5))
 
-# Conjunto 2: suporte =    e confiança =    
- 
+# Conjunto 2: suporte = 0,01 e confiança = 0,5
+# Suporte intermediário (>= 26 cestas): entram os 39 itens com frequência
+# >= 1%, o que cobre os 30 itens do gráfico da Atividade 1 e permite regras
+# com dois itens no antecedente. Confiança mantida em 0,5.
+regras2 <- apriori(transacoes,
+                   parameter = list(supp = 0.01, conf = 0.5, minlen = 2),
+                   control = list(verbose = FALSE))
+inspect(head(sort(regras2, by = "confidence"), 5))
 
-# Conjunto 3: suporte =    e confiança =    
+# Conjunto 3: suporte = 0,005 e confiança = 0,6
+# Suporte baixo (>= 13 cestas), para alcançar itens da cauda da distribuição
+# (44 itens elegíveis). Confiança acima da frequência do Coffee (54,4%), para
+# que toda regra X => {Coffee} que restar fique acima da linha de base desse item.
+regras3 <- apriori(transacoes,
+                   parameter = list(supp = 0.005, conf = 0.6, minlen = 2),
+                   control = list(verbose = FALSE))
+inspect(head(sort(regras3, by = "confidence"), 5))
 
+# Conjunto 4: suporte = 0,01 e confiança = 0,2
+# Mesmo suporte do Conjunto 2, mas com confiança baixa, abaixo da frequência
+# de Tea (23,9%) e próxima da de Cake (20,0%). Assim, itens menos frequentes
+# que o Coffee também podem aparecer como consequente.
+regras4 <- apriori(transacoes,
+                   parameter = list(supp = 0.01, conf = 0.2, minlen = 2),
+                   control = list(verbose = FALSE))
+inspect(head(sort(regras4, by = "confidence"), 5))
 
+# Comparação entre os conjuntos: total de regras, regras com 3 itens
+# (antecedente com 2 itens) e número de consequentes distintos
+conjuntos <- list(regras1, regras2, regras3, regras4)
+data.frame(conjunto = 1:4,
+           suporte = c(0.05, 0.01, 0.005, 0.01),
+           confianca = c(0.5, 0.5, 0.6, 0.2),
+           n_regras = sapply(conjuntos, length),
+           n_regras_3_itens = sapply(conjuntos, function(r) sum(size(r) == 3)),
+           n_consequentes = sapply(conjuntos,
+                                   function(r) length(unique(labels(rhs(r))))))
+
+# Proporção de cestas com Coffee de acordo com o tamanho da cesta
+# (usada na resposta para avaliar as regras com dois itens no antecedente)
+tem_coffee <- transacoes %in% "Coffee"
+tamanho <- cut(size(transacoes), breaks = c(0, 1, 2, 3, 4, 5, Inf),
+               labels = c("1", "2", "3", "4", "5", "6+"))
+round(tapply(tem_coffee, tamanho, mean), 3)
+
+# Proporção de cestas com Coffee entre as que têm Sandwich, com e sem Soup
+tem_sandwich <- transacoes %in% "Sandwich"
+tem_soup <- transacoes %in% "Soup"
+c(com_soup = mean(tem_coffee[tem_sandwich & tem_soup]),
+  sem_soup = mean(tem_coffee[tem_sandwich & !tem_soup]))
 ```
 
 ## Análises 
@@ -123,6 +177,30 @@ a) Quais as regras mais interessantes geradas a partir dessa base? Justifique.
 
 **Resposta:** <!-- Escreva sua resposta abaixo -->
 
+Escolhemos os parâmetros com base na Atividade 1: suporte entre 0,5% (regras apoiadas em pelo menos 13 cestas) e 5% (apenas os 17 itens mais populares podem entrar) e confiança comparada com a frequência do Coffee (54,4%), que é a linha de base das regras $X \Rightarrow \{\mathrm{Coffee}\}$.
+
+**O que os conjuntos mostram:**
+
+- *Conjunto 1 (suporte 5%, confiança 50%):* apenas 7 regras, todas do tipo $\{\text{item}\} \Rightarrow \{\mathrm{Coffee}\}$. As confianças (de 0,52 a 0,60) ficam todas perto dos 0,544 de base, e a de $\{\mathrm{Juice}\} \Rightarrow \{\mathrm{Coffee}\}$ (0,517) fica até abaixo desse valor. A regra $\{\mathrm{Cake}\} \Rightarrow \{\mathrm{Coffee}\}$, por exemplo, tem o maior suporte (11,2%, 288 cestas), mas confiança de 0,559: comprar bolo quase não altera a chance de levar café (lift de 1,03). São regras frequentes, mas óbvias, porque só refletem a popularidade do Coffee.
+- *Conjunto 2 (suporte 1%, confiança 50%):* com o suporte mais baixo, surgem regras com itens menos populares (Toast, Salad) e regras com dois itens no antecedente (15 das 33 regras). As cinco regras de maior confiança ficam entre 0,63 e 0,72, bem acima da base de 0,544 (mas veja abaixo a ressalva sobre as regras com dois itens no antecedente).
+- *Conjunto 3 (suporte 0,5%, confiança 60%):* alcança itens da cauda e produz as maiores confianças (até 0,90), além do primeiro consequente diferente de Coffee. Em compensação, as cinco primeiras regras se apoiam em apenas 14 a 25 cestas.
+- *Conjunto 4 (suporte 1%, confiança 20%):* as cinco primeiras regras são as mesmas do Conjunto 2. Isso era esperado, porque o Conjunto 2 está contido no 4, e baixar a confiança só acrescenta regras de confiança menor ao fim da lista. As 115 regras têm 7 consequentes diferentes (Bread, Cake, Coffee, Cookies, Pastry, Sandwich e Tea), mas os que não são Coffee só aparecem com confiança abaixo de 0,5. Como previsto na Atividade 1b, esses itens são bem menos frequentes que o Coffee, e por isso ordenar só por confiança não os coloca no topo.
+
+Nos três primeiros conjuntos, praticamente todas as regras têm Coffee no consequente. Por isso, uma confiança alta, sozinha, não basta para indicar uma regra interessante. Consideramos interessante a regra que (i) se apoia em um número razoável de cestas, (ii) tem confiança claramente acima da frequência do consequente (lift maior que 1 na saída do `inspect`) e (iii) não é explicada por uma regra mais simples.
+
+**Regras mais interessantes:**
+
+1. $\{\mathrm{Toast}\} \Rightarrow \{\mathrm{Coffee}\}$ (suporte 4,0%, 103 cestas, confiança 72%, lift 1,32). É a regra mais equilibrada da base: tem a maior confiança entre as regras com suporte de pelo menos 1% e se apoia em mais de 100 cestas. Quem compra torrada leva café em 72% das vezes, contra 54,4% no geral, o que é compatível com um consumo de café da manhã. Ela lidera os Conjuntos 2 e 4 e também está no Conjunto 3. Só fica de fora do Conjunto 1 porque seu suporte (4,0%) é menor que 5%.
+2. $\{\mathrm{Salad}\} \Rightarrow \{\mathrm{Coffee}\}$ (suporte 1,7%, 45 cestas, confiança 68,2%, lift 1,25). Entre as regras de um único item no antecedente e suporte de pelo menos 1%, é a segunda de maior confiança, atrás apenas de Toast, e também fica bem acima da base de 54,4%.
+3. $\{\mathrm{Extra\ Salami\ or\ Feta}\} \Rightarrow \{\mathrm{Salad}\}$ (confiança 80%, lift 31,3) e $\{\mathrm{Extra\ Salami\ or\ Feta}\} \Rightarrow \{\mathrm{Coffee}\}$ (confiança 90%), do Conjunto 3. A primeira é, de longe, a associação mais forte encontrada segundo o lift: a salada aparece 31 vezes mais nas cestas com esse item do que no geral, o que sugere que ele é vendido como adicional da salada. Mas essas regras precisam de cautela, porque se apoiam em só 16 e 18 das 2579 cestas, e uma ou duas compras a mais ou a menos mudam bastante a confiança. Além disso, $\{\mathrm{Extra\ Salami\ or\ Feta}, \mathrm{Salad}\} \Rightarrow \{\mathrm{Coffee}\}$ (87,5%) tem confiança *menor* que $\{\mathrm{Extra\ Salami\ or\ Feta}\} \Rightarrow \{\mathrm{Coffee}\}$ (90%). Acrescentar a salada ao antecedente não traz informação nova, então essa regra é redundante. Pelo mesmo motivo, $\{\mathrm{Coffee}, \mathrm{Extra\ Salami\ or\ Feta}\} \Rightarrow \{\mathrm{Salad}\}$ (77,8%) é redundante em relação a $\{\mathrm{Extra\ Salami\ or\ Feta}\} \Rightarrow \{\mathrm{Salad}\}$ (80%).
+
+**Regras pouco interessantes.** As regras do Conjunto 1 têm suporte alto, mas confiança próxima da frequência do Coffee (lift entre 0,95 e 1,10), então revelam no máximo uma associação fraca.
+
+As regras com dois itens no antecedente que aparecem no topo dos Conjuntos 2 e 4 também pedem cautela: $\{\mathrm{Cake}, \mathrm{Sandwich}\} \Rightarrow \{\mathrm{Coffee}\}$ (68,5%), $\{\mathrm{Hot\ chocolate}, \mathrm{Pastry}\} \Rightarrow \{\mathrm{Coffee}\}$ (66,7%) e $\{\mathrm{Sandwich}, \mathrm{Soup}\} \Rightarrow \{\mathrm{Coffee}\}$ (62,8%). A presença de café cresce com o tamanho da cesta, independentemente dos itens: ele aparece em 27% das cestas de 2 itens, 58,7% das de 3 e 69% das de 4. Um antecedente com dois itens já indica uma cesta maior, e por isso parte da confiança alta dessas regras vem só do tamanho da compra. Por exemplo, entre as cestas com Sandwich, a proporção com café é de 62,8% quando há Soup e de 59,4% quando não há, uma diferença pequena para apenas 43 cestas com os dois itens.
+
+Por fim, há regras com confiança aparentemente razoável que escondem uma associação *negativa*, como $\{\mathrm{Bread}\} \Rightarrow \{\mathrm{Coffee}\}$ (46,8%) e $\{\mathrm{Tea}\} \Rightarrow \{\mathrm{Coffee}\}$ (43,3%), ambas no Conjunto 4. Quem compra pão ou chá leva café *menos* do que a média das cestas (54,4%).
+
+**Conjunto escolhido para a Atividade 3.** Analisamos o Conjunto 4 (`regras4`) na próxima atividade. Ele contém todas as regras do Conjunto 2 (incluindo as de Toast e Salad), é o conjunto com mais consequentes diferentes (7, contra no máximo 2 nos demais) e inclui regras com dependência negativa, como as de Bread e Tea. Os consequentes variados são importantes: quando todas as regras têm o mesmo consequente, o lift e a convicção crescem junto com a confiança e reproduziriam a mesma ordenação, como aconteceria nos Conjuntos 1 e 2.
 
 <!-- Fim da resposta -->
 
