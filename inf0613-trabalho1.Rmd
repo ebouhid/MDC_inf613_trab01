@@ -216,16 +216,93 @@ quality(regras) <- cbind(quality(regras), interestMeasure(regras, measure=c("con
 
 
 ```{r atv3-code}
-# Compute as medidas de interesse 
+# Conjunto analisado: Conjunto 4 (regras4; suporte = 0,01 e confiança = 0,2),
+# escolhido na Atividade 2. Tem 115 regras e 7 consequentes diferentes.
 
+# Compute as medidas de interesse
+# O apriori já devolve o lift, mas aqui as três medidas são calculadas com o
+# interestMeasure. O lift recalculado é idêntico ao do apriori e o substitui.
+# A coluna coverage (suporte do antecedente) não é usada na análise.
+medidas <- interestMeasure(regras4, measure = c("lift", "conviction", "oddsRatio"),
+                           transactions = transacoes)
+quality(regras4) <- cbind(quality(regras4)[, c("support", "confidence", "count")],
+                          medidas)
+
+# Função auxiliar: exibe as n primeiras regras numa tabela compacta, para que
+# todas as medidas caibam na largura da página (o inspect quebraria a tabela).
+# Colunas: supp = suporte, conf = confiança, conv = convicção,
+# odds = razão de chances e n = número de cestas que contêm a regra.
+mostrar_regras <- function(regras, n = 10) {
+  r <- head(regras, n)
+  q <- quality(r)
+  data.frame(regra = format(labels(r)), supp = q$support, conf = q$confidence,
+             lift = q$lift, conv = q$conviction, odds = q$oddsRatio, n = q$count)
+}
 
 # Apresente as regras ordenadas por lift
+mostrar_regras(sort(regras4, by = "lift"))
 
 # Apresente as regras ordenadas por convicção
+mostrar_regras(sort(regras4, by = "conviction"))
 
 # Apresente as regras ordenadas por razão de chances
+mostrar_regras(sort(regras4, by = "oddsRatio"))
 
+# Correlação de Spearman entre as ordenações produzidas por cada medida
+q4 <- quality(regras4)
+cor(q4[, c("confidence", "lift", "conviction", "oddsRatio")], method = "spearman")
 
+# Posição de algumas regras em cada ordenação (1 = primeira das 115)
+posicoes <- data.frame(regra = labels(regras4),
+                       conf = rank(-q4$confidence, ties.method = "min"),
+                       lift = rank(-q4$lift, ties.method = "min"),
+                       conv = rank(-q4$conviction, ties.method = "min"),
+                       odds = rank(-q4$oddsRatio, ties.method = "min"))
+selecionadas <- c("{Toast} => {Coffee}", "{Salad} => {Coffee}",
+                  "{Coke} => {Sandwich}", "{Soup} => {Sandwich}",
+                  "{Jam} => {Bread}", "{Medialuna} => {Pastry}",
+                  "{Coffee,Soup} => {Sandwich}", "{Coffee,Juice} => {Cookies}",
+                  "{Jam} => {Coffee}", "{Bread,Tea} => {Coffee}")
+print(posicoes[match(selecionadas, posicoes$regra), ], row.names = FALSE)
+
+# Dependência negativa: as 10 regras de menor lift
+mostrar_regras(sort(regras4, by = "lift", decreasing = FALSE))
+
+# Contagem de regras com dependência negativa (medida < 1) e de regras
+# redundantes (existe uma regra mais geral, com o mesmo consequente, de
+# confiança maior ou igual)
+redundante <- is.redundant(regras4)
+c(total = length(regras4),
+  lift_menor_1 = sum(q4$lift < 1),
+  conv_menor_1 = sum(q4$conviction < 1),
+  odds_menor_1 = sum(q4$oddsRatio < 1),
+  lift_menor_1_conf_40 = sum(q4$lift < 1 & q4$confidence >= 0.4),
+  redundantes = sum(redundante),
+  redundantes_lift_menor_1 = sum(redundante & q4$lift < 1),
+  nao_redundantes_lift_maior_1 = sum(!redundante & q4$lift > 1))
+
+# Tea x Coffee: proporção de cestas com Coffee, com e sem Tea, de acordo com o
+# tamanho da cesta (tem_coffee e tamanho foram definidos na Atividade 2)
+tem_tea <- transacoes %in% "Tea"
+round(rbind(com_tea = tapply(tem_coffee[tem_tea], tamanho[tem_tea], mean),
+            sem_tea = tapply(tem_coffee[!tem_tea], tamanho[!tem_tea], mean)), 3)
+
+# Papel do Coffee em {Coffee, Soup} => {Sandwich} e {Coffee, Juice} => {Cookies}:
+# regras com um único item no antecedente formadas pelos mesmos itens (mesmo
+# suporte do Conjunto 4, mas sem confiança mínima)
+regras_simples <- apriori(transacoes,
+                          parameter = list(supp = 0.01, conf = 0, minlen = 2,
+                                           maxlen = 2),
+                          appearance = list(lhs = c("Coffee", "Soup", "Juice"),
+                                            rhs = c("Sandwich", "Cookies"),
+                                            default = "none"),
+                          control = list(verbose = FALSE))
+inspect(sort(regras_simples, by = "lift"))
+
+# Tamanho médio das cestas com Soup, com e sem Coffee
+# (tem_soup foi definido na Atividade 2)
+c(com_coffee = mean(size(transacoes)[tem_soup & tem_coffee]),
+  sem_coffee = mean(size(transacoes)[tem_soup & !tem_coffee]))
 ```
 
 
@@ -234,6 +311,41 @@ a) Quais as regras mais interessantes do conjunto? Justifique.
 
 **Resposta:** <!-- Escreva sua resposta abaixo -->
 
+Analisamos o Conjunto 4 (`regras4`, suporte de 1% e confiança de 20%), escolhido na Atividade 2, que tem 115 regras e 7 consequentes diferentes. Para uma regra $X \Rightarrow Y$, as três medidas comparam o seguinte:
+
+- **Lift** $= \mathrm{conf}(X \Rightarrow Y) / \mathrm{supp}(Y)$: quantas vezes a presença de $X$ multiplica a chance de $Y$ em relação à base. É simétrico: $X \Rightarrow Y$ e $Y \Rightarrow X$ têm o mesmo lift.
+- **Convicção** $= (1 - \mathrm{supp}(Y)) / (1 - \mathrm{conf}(X \Rightarrow Y))$: quantas vezes a regra erraria mais se $X$ e $Y$ fossem independentes. Não é simétrica e cresce muito quando a confiança se aproxima de 1.
+- **Razão de chances:** divide a chance de $Y$ (probabilidade de ter $Y$ dividida pela de não ter) nas cestas com $X$ pela mesma chance nas cestas sem $X$. Usa as quatro células da tabela de contingência e também é simétrica.
+
+As três valem 1 quando $X$ e $Y$ são independentes, ficam acima de 1 quando há dependência positiva e abaixo de 1 quando há dependência negativa.
+
+**Como cada medida ordena as regras.**
+
+- *Lift:* 9 das 10 primeiras regras têm um consequente diferente de Coffee. Isso acontece porque o lift nunca passa de $1/\mathrm{supp}(Y)$. Como Coffee está em 54,4% das cestas, uma regra com Coffee no consequente tem lift de no máximo 1,84, enquanto para Sandwich (12,8% das cestas) o limite é 7,8. O lift, portanto, favorece consequentes menos frequentes. $\{\mathrm{Toast}\} \Rightarrow \{\mathrm{Coffee}\}$, a primeira por confiança, fica só em 8º lugar.
+- *Convicção:* 7 das 10 primeiras regras têm Coffee no consequente, e as 4 primeiras são as mesmas 4 primeiras por confiança. Para um mesmo consequente, a convicção cresce junto com a confiança, então ela premia regras de confiança alta, que nesta base são quase sempre de Coffee. Por isso $\{\mathrm{Coke}\} \Rightarrow \{\mathrm{Sandwich}\}$, a primeira por lift, cai para 7º: 71% das cestas com Coke não têm Sandwich, e como implicação a regra erra muito.
+- *Razão de chances:* a ordenação fica próxima da do lift (8 das 10 primeiras regras coincidem), mas a medida não é limitada pela frequência do consequente. Assim, $\{\mathrm{Toast}\} \Rightarrow \{\mathrm{Coffee}\}$ sobe de 8º (lift) para 4º: a chance de levar café é 2,25 vezes maior nas cestas com torrada do que nas cestas sem torrada.
+
+A correlação de Spearman entre as ordenações das três medidas fica entre 0,94 e 0,99, mas a de cada uma com a confiança é de só 0,17 a 0,18. Ou seja, as novas medidas concordam bastante entre si e ordenam as regras de um jeito muito diferente da confiança, que foi o critério usado na Atividade 2.
+
+**Dependência negativa.** Como as três medidas cruzam o valor 1 ao mesmo tempo, elas concordam sobre quais regras têm dependência negativa: são 66 das 115 regras (57%), que o `apriori` manteve porque têm suporte e confiança acima dos mínimos. Dessas, 30 têm confiança de pelo menos 40% e poderiam passar por boas regras se olhássemos só a confiança. Todas elas têm Coffee no consequente, já que ter lift menor que 1 com confiança de pelo menos 0,4 exige $\mathrm{supp}(Y) > 0{,}4$, e só o Coffee passa disso. É o caso de $\{\mathrm{Bread}\} \Rightarrow \{\mathrm{Coffee}\}$ e $\{\mathrm{Tea}\} \Rightarrow \{\mathrm{Coffee}\}$, já citadas na Atividade 2.
+
+A regra de dependência mais negativa é a mesma pelas três medidas: $\{\mathrm{Bread}, \mathrm{Tea}\} \Rightarrow \{\mathrm{Coffee}\}$ (lift 0,585, convicção 0,669, razão de chances 0,369), última nas três ordenações. Chá e café parecem ser substitutos: o cliente escolhe uma das bebidas quentes. E isso não se explica pelo tamanho da cesta: em todos os tamanhos, as cestas com Tea têm Coffee com menos frequência (8,8% contra 29,8% nas cestas de 2 itens, 37,4% contra 64,7% nas de 3 e 52,1% contra 77,1% nas de 4). É uma informação útil sobre os clientes, mas não uma regra de associação interessante.
+
+**Redundância.** A função `is.redundant` aponta 29 regras redundantes, ou seja, regras para as quais existe uma regra mais geral (com antecedente menor e o mesmo consequente) de confiança maior ou igual. Todas têm dois itens no antecedente, e 26 delas também têm lift menor que 1. Por exemplo, $\{\mathrm{Bread}, \mathrm{Tea}\} \Rightarrow \{\mathrm{Coffee}\}$ (31,8%) é redundante, porque $\{\mathrm{Tea}\} \Rightarrow \{\mathrm{Coffee}\}$ tem confiança maior (43,3%). Descartando as regras redundantes e as de dependência negativa, restam 46 regras.
+
+**Regras mais interessantes.** Quatro regras estão entre as 10 primeiras nas três ordenações: $\{\mathrm{Toast}\} \Rightarrow \{\mathrm{Coffee}\}$, $\{\mathrm{Coke}\} \Rightarrow \{\mathrm{Sandwich}\}$, $\{\mathrm{Coffee}, \mathrm{Soup}\} \Rightarrow \{\mathrm{Sandwich}\}$ e $\{\mathrm{Jam}\} \Rightarrow \{\mathrm{Bread}\}$. Partindo delas, e levando em conta o número de cestas e as ressalvas da Atividade 2, consideramos mais interessantes:
+
+1. $\{\mathrm{Toast}\} \Rightarrow \{\mathrm{Coffee}\}$ (103 cestas, confiança 72%, lift 1,32, convicção 1,63, razão de chances 2,25). É a 1ª por convicção, a 4ª por razão de chances e a 8ª por lift, e é a regra com mais cestas entre todas as que aparecem nas 10 primeiras posições de alguma das três ordenações. Seu lift não é maior só porque o Coffee é muito frequente (o máximo possível seria 1,84). As medidas confirmam a principal regra da Atividade 2. A segunda regra escolhida lá, $\{\mathrm{Salad}\} \Rightarrow \{\mathrm{Coffee}\}$, também continua bem posicionada (3ª por convicção e 7ª por razão de chances).
+2. $\{\mathrm{Coke}\} \Rightarrow \{\mathrm{Sandwich}\}$ e $\{\mathrm{Soup}\} \Rightarrow \{\mathrm{Sandwich}\}$ (28 e 43 cestas; lift 2,25 e 1,68; razão de chances 2,92 e 1,99). A primeira lidera as ordenações por lift e por razão de chances, e a segunda fica em 4º e 5º. Juntas, indicam um padrão de almoço, com sanduíche acompanhado de refrigerante ou sopa, diferente do café da manhã das regras com Coffee. Pela confiança, elas estariam em 67º e 110º lugar entre as 115 regras, porque Sandwich aparece em poucas cestas. São o melhor exemplo do que as novas medidas revelam e a confiança esconde. Como ressalva, se apoiam em poucas cestas e têm convicção baixa (1,23 e 1,11): a maioria de quem compra Coke não leva sanduíche, mas quem compra Coke leva sanduíche 2,25 vezes mais do que a média dos clientes.
+3. $\{\mathrm{Jam}\} \Rightarrow \{\mathrm{Bread}\}$ (35 cestas, confiança 46,7%, lift 1,42, convicção 1,26, razão de chances 1,82). Está entre as 10 primeiras nas três ordenações. Já $\{\mathrm{Jam}\} \Rightarrow \{\mathrm{Coffee}\}$ tem dependência negativa (lift 0,735) e fica entre as últimas nas três. Ou seja, a geleia é comprada junto com o pão e não com o café, o que sugere uma compra para levar para casa, e não para consumir na padaria.
+4. $\{\mathrm{Medialuna}\} \Rightarrow \{\mathrm{Pastry}\}$ (54 cestas, lift 1,51, razão de chances 1,75). É a última das 115 regras por confiança (20%, exatamente o mínimo usado) e a 21ª por convicção, mas a 5ª por lift e a 9ª por razão de chances: dois doces de café da manhã comprados juntos. Tem mais cestas que as regras de almoço, mas uma confiança mínima um pouco maior no `apriori` já a teria descartado.
+
+**Regras que pedem cautela.**
+
+- $\{\mathrm{Coffee}, \mathrm{Soup}\} \Rightarrow \{\mathrm{Sandwich}\}$ e $\{\mathrm{Coffee}, \mathrm{Juice}\} \Rightarrow \{\mathrm{Cookies}\}$ ficam em 2º e 3º por lift e por razão de chances. Como discutido na Atividade 2, um antecedente com dois itens indica uma cesta maior. As regras com um único item no antecedente mostram que o Coffee sozinho quase não muda a chance de Sandwich (lift 1,10) ou de Cookies (lift 1,06), enquanto Soup (lift 1,68) e Juice (lift 1,70) concentram a associação. $\{\mathrm{Juice}\} \Rightarrow \{\mathrm{Cookies}\}$ só ficou fora do Conjunto 4 porque sua confiança (19,3%) é menor que 20%. Além disso, as cestas com Soup e Coffee têm em média 3,9 itens, contra 3,2 nas cestas com Soup sem Coffee, então parte do lift maior das regras com Coffee pode vir apenas do tamanho da cesta. Por isso tratamos essas regras como variações de $\{\mathrm{Soup}\} \Rightarrow \{\mathrm{Sandwich}\}$ e $\{\mathrm{Juice}\} \Rightarrow \{\mathrm{Cookies}\}$, e não como uma associação própria do Coffee.
+- $\{\mathrm{Cake}, \mathrm{Sandwich}\} \Rightarrow \{\mathrm{Coffee}\}$ e $\{\mathrm{Hot\ chocolate}, \mathrm{Pastry}\} \Rightarrow \{\mathrm{Coffee}\}$ ficam em 2º e 4º por convicção só porque a convicção acompanha a confiança. O lift delas é modesto (1,26 e 1,23), e a Atividade 2 já mostrou que parte dessa confiança vem do tamanho da cesta.
+
+Em resumo, as três medidas concordam sobre a direção da dependência e, em boa parte, sobre a ordenação, mas o lift e a razão de chances favorecem consequentes raros e a convicção favorece regras de confiança alta. Combinando as três com o número de cestas, as regras mais interessantes são $\{\mathrm{Toast}\} \Rightarrow \{\mathrm{Coffee}\}$ (café da manhã), $\{\mathrm{Coke}\} \Rightarrow \{\mathrm{Sandwich}\}$ e $\{\mathrm{Soup}\} \Rightarrow \{\mathrm{Sandwich}\}$ (almoço), $\{\mathrm{Jam}\} \Rightarrow \{\mathrm{Bread}\}$ e $\{\mathrm{Medialuna}\} \Rightarrow \{\mathrm{Pastry}\}$. Isso é coerente com a Atividade 2: as regras escolhidas lá continuam no topo, e as novas medidas acrescentam regras com consequentes diferentes de Coffee, que a confiança não deixava aparecer, além de apontar as 66 regras com dependência negativa. A regra de maior lift encontrada na Atividade 2, $\{\mathrm{Extra\ Salami\ or\ Feta}\} \Rightarrow \{\mathrm{Salad}\}$, não aparece aqui porque seu suporte (0,6%) é menor que o mínimo de 1% do Conjunto 4.
 
 <!-- Fim da resposta -->
 
